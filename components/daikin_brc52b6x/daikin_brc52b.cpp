@@ -1,12 +1,12 @@
-#include "daikin.h"
+#include "daikin_brc52b.h"
 #include "esphome/components/remote_base/remote_base.h"
 
 namespace esphome {
-namespace daikin {
+namespace daikin_brc52b {
 
-static const char *const TAG = "daikin.climate";
+static const char *const TAG = "daikin_brc52b6x.climate";
 
-void DaikinClimate::transmit_state() {
+void DaikinBRC52bClimate::transmit_state() {
   uint8_t remote_state[35] = {0x11, 0xDA, 0x27, 0x00, 0xC5, 0x00, 0x00, 0xD7, 0x11, 0xDA, 0x27, 0x00,
                               0x42, 0x49, 0x05, 0xA2, 0x11, 0xDA, 0x27, 0x00, 0x00, 0x00, 0x00, 0x00,
                               0x00, 0x00, 0x00, 0x06, 0x60, 0x00, 0x00, 0xC0, 0x00, 0x00, 0x00};
@@ -65,7 +65,7 @@ void DaikinClimate::transmit_state() {
   transmit.perform();
 }
 
-uint8_t DaikinClimate::operation_mode_() {
+uint8_t DaikinBRC52bClimate::operation_mode_() {
   uint8_t operating_mode = DAIKIN_MODE_ON;
   switch (this->mode) {
     case climate::CLIMATE_MODE_COOL:
@@ -92,7 +92,7 @@ uint8_t DaikinClimate::operation_mode_() {
   return operating_mode;
 }
 
-uint16_t DaikinClimate::fan_speed_() {
+uint16_t DaikinBRC52bClimate::fan_speed_() {
   uint16_t fan_speed;
   switch (this->fan_mode.value()) {
     case climate::CLIMATE_FAN_LOW:
@@ -126,7 +126,7 @@ uint16_t DaikinClimate::fan_speed_() {
   return fan_speed;
 }
 
-uint8_t DaikinClimate::temperature_() {
+uint8_t DaikinBRC52bClimate::temperature_() {
   // Force special temperatures depending on the mode
   switch (this->mode) {
     case climate::CLIMATE_MODE_FAN_ONLY:
@@ -140,7 +140,7 @@ uint8_t DaikinClimate::temperature_() {
   }
 }
 
-bool DaikinClimate::parse_state_frame_(const uint8_t frame[]) {
+bool DaikinBRC52bClimate::parse_state_frame_(const uint8_t frame[]) {
   uint8_t checksum = 0;
   for (int i = 0; i < (DAIKIN_STATE_FRAME_SIZE - 1); i++) {
     checksum += frame[i];
@@ -205,7 +205,7 @@ bool DaikinClimate::parse_state_frame_(const uint8_t frame[]) {
   return true;
 }
 
-bool DaikinClimate::on_receive(remote_base::RemoteReceiveData data) {
+bool DaikinBRC52bClimate::on_receive(remote_base::RemoteReceiveData data) {
   uint8_t state_frame[DAIKIN_STATE_FRAME_SIZE] = {};
   if (!data.expect_item(DAIKIN_HEADER_MARK, DAIKIN_HEADER_SPACE)) {
     return false;
@@ -245,5 +245,5 @@ bool DaikinClimate::on_receive(remote_base::RemoteReceiveData data) {
   return this->parse_state_frame_(state_frame);
 }
 
-}  // namespace daikin
+}  // namespace daikin_brc52b
 }  // namespace esphome
