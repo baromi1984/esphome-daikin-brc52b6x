@@ -1,248 +1,279 @@
+#include <iomanip>
+#include <sstream>
+
 #include "daikin_brc52b.h"
 #include "esphome/components/remote_base/remote_base.h"
+#include "esphome/core/optional.h"
 
 namespace esphome {
 namespace daikin_brc52b {
 
 static const char *const TAG = "daikin_brc52b6x.climate";
 
-void DaikinBRC52bClimate::transmit_state() {
-  uint8_t remote_state[35] = {0x11, 0xDA, 0x27, 0x00, 0xC5, 0x00, 0x00, 0xD7, 0x11, 0xDA, 0x27, 0x00,
-                              0x42, 0x49, 0x05, 0xA2, 0x11, 0xDA, 0x27, 0x00, 0x00, 0x00, 0x00, 0x00,
-                              0x00, 0x00, 0x00, 0x06, 0x60, 0x00, 0x00, 0xC0, 0x00, 0x00, 0x00};
-
-  remote_state[21] = this->operation_mode_();
-  remote_state[22] = this->temperature_();
-  uint16_t fan_speed = this->fan_speed_();
-  remote_state[24] = fan_speed >> 8;
-  remote_state[25] = fan_speed & 0xff;
-
-  // Calculate checksum
-  for (int i = 16; i < 34; i++) {
-    remote_state[34] += remote_state[i];
+namespace {
+std::string daikin_frame_to_string(uint8_t frame[DAIKIN_STATE_FRAME_SIZE]) {
+  std::ostringstream stream;
+  std::hex(stream);
+  for (int i = 0; i < DAIKIN_STATE_FRAME_SIZE; i++) {
+    stream << (i == 0 ? "" : " ") << "0x" << std::setfill('0') << std::setw(2) << static_cast<int>(frame[i]);
   }
+  return stream.str();
+}
+
+void encode_byte(remote_base::RemoteTransmitData &data, uint8_t byte) {
+  // Note: bytes are transmitted from least to most significant.
+  for (int i = 0; i < 8; i++) {
+    data.item(DAIKIN_BIT_MARK, (byte & 0x1) ? DAIKIN_ONE_SPACE : DAIKIN_ZERO_SPACE);
+    byte >>= 1;
+  }
+}
+
+// Convert a number in the range [00-99] to binary-coded decimal, with the tens digit in the upper four bits and the
+// ones digit in the lower four bits.
+uint8_t encode_bcd(uint8_t value) { return ((value / 10) << 4) | ((value % 10) & 0xF); }
+
+// Inverse of encode_bcd().
+uint8_t decode_bcd(uint8_t value_bcd) { return 10 * (value_bcd >> 4) + (value_bcd & 0xF); }
+}  // namespace
+
+void DaikinBRC52bClimate::transmit_state() {
+  if (this->mode != climate::CLIMATE_MODE_OFF) {
+    this->saved_mode_ = this->mode;
+  }
+
+  uint8_t state_frame[DAIKIN_STATE_FRAME_SIZE];
+  state_frame[0] = DAIKIN_FRAME_1_HEADER;
+  state_frame[1] = this->encode_mode() | this->encode_fan_speed();
+  state_frame[2] = 0x00;  // TODO
+  state_frame[3] = 0x00;  // TODO
+  state_frame[4] = 0x13;  // TODO
+  state_frame[5] = 0x04;  // TODO
+  state_frame[6] = this->encode_temperature();
+  state_frame[7] = this->encode_power_toggle() | 0x4 | this->encode_fan_swing();
+
+  uint8_t state_checksum = 0;
+  for (int i = 0; i < DAIKIN_STATE_FRAME_SIZE; i++) {
+    uint8_t byte = state_frame[i];
+    state_checksum += (byte >> 4) + (byte & 0xF);
+  }
+  state_frame[7] |= (state_checksum & 0xF) << 4;
+
+  uint8_t control_frame[DAIKIN_STATE_FRAME_SIZE] = {0xA1, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+
+  uint8_t control_checksum = 0;
+  for (int i = 0; i < DAIKIN_STATE_FRAME_SIZE; i++) {
+    uint8_t byte = control_frame[i];
+    control_checksum += (byte >> 4) + (byte & 0xF);
+  }
+  control_frame[7] = control_checksum;
+
+  ESP_LOGV(TAG, "Transmitting state frame:   %s", daikin_frame_to_string(state_frame).c_str());
+  ESP_LOGVV(TAG, "Transmitting control frame: %s", daikin_frame_to_string(control_frame).c_str());
 
   auto transmit = this->transmitter_->transmit();
   auto *data = transmit.get_data();
   data->set_carrier_frequency(DAIKIN_IR_FREQUENCY);
 
-  data->mark(DAIKIN_HEADER_MARK);
-  data->space(DAIKIN_HEADER_SPACE);
-  for (int i = 0; i < 8; i++) {
-    for (uint8_t mask = 1; mask > 0; mask <<= 1) {  // iterate through bit mask
-      data->mark(DAIKIN_BIT_MARK);
-      bool bit = remote_state[i] & mask;
-      data->space(bit ? DAIKIN_ONE_SPACE : DAIKIN_ZERO_SPACE);
-    }
-  }
-  data->mark(DAIKIN_BIT_MARK);
-  data->space(DAIKIN_MESSAGE_SPACE);
-  data->mark(DAIKIN_HEADER_MARK);
-  data->space(DAIKIN_HEADER_SPACE);
+  // Hack: Send a "negative header" so that _this_ receiver can ignore its own IR commands. These extra pulses make the
+  // message unrecognizable to our receiver but not to the unit being controlled.
+  //
+  // We want to avoid mistaking our own power toggle command for a power toggle command from the remote, which would
+  // make it difficult to properly track whether the unit is powered on.
+  data->item(250, 250);
+  data->item(250, 250);
 
-  for (int i = 8; i < 16; i++) {
-    for (uint8_t mask = 1; mask > 0; mask <<= 1) {  // iterate through bit mask
-      data->mark(DAIKIN_BIT_MARK);
-      bool bit = remote_state[i] & mask;
-      data->space(bit ? DAIKIN_ONE_SPACE : DAIKIN_ZERO_SPACE);
-    }
-  }
-  data->mark(DAIKIN_BIT_MARK);
-  data->space(DAIKIN_MESSAGE_SPACE);
-  data->mark(DAIKIN_HEADER_MARK);
-  data->space(DAIKIN_HEADER_SPACE);
+  data->item(DAIKIN_HEADER1_MARK, DAIKIN_HEADER1_SPACE);
+  data->item(DAIKIN_HEADER1_MARK, DAIKIN_HEADER1_SPACE);
+  data->item(DAIKIN_HEADER2_MARK, DAIKIN_HEADER2_SPACE);
 
-  for (int i = 16; i < 35; i++) {
-    for (uint8_t mask = 1; mask > 0; mask <<= 1) {  // iterate through bit mask
-      data->mark(DAIKIN_BIT_MARK);
-      bool bit = remote_state[i] & mask;
-      data->space(bit ? DAIKIN_ONE_SPACE : DAIKIN_ZERO_SPACE);
-    }
+  for (int i = 0; i < DAIKIN_STATE_FRAME_SIZE; i++) {
+    encode_byte(*data, state_frame[i]);
   }
-  data->mark(DAIKIN_BIT_MARK);
-  data->space(0);
+
+  data->item(DAIKIN_BIT_MARK, DAIKIN_FRAME_GAP);
+
+  for (int i = 0; i < DAIKIN_STATE_FRAME_SIZE; i++) {
+    encode_byte(*data, control_frame[i]);
+  }
+
+  encode_byte(*data, 0);
+  data->item(DAIKIN_HEADER2_MARK, DAIKIN_HEADER2_SPACE);
 
   transmit.perform();
 }
 
-uint8_t DaikinBRC52bClimate::operation_mode_() {
-  uint8_t operating_mode = DAIKIN_MODE_ON;
-  switch (this->mode) {
+uint8_t DaikinBRC52bClimate::encode_mode() const {
+  switch (this->saved_mode_) {
     case climate::CLIMATE_MODE_COOL:
-      operating_mode |= DAIKIN_MODE_COOL;
-      break;
+      return DAIKIN_MODE_COOL;
     case climate::CLIMATE_MODE_DRY:
-      operating_mode |= DAIKIN_MODE_DRY;
-      break;
+      return DAIKIN_MODE_DRY;
     case climate::CLIMATE_MODE_HEAT:
-      operating_mode |= DAIKIN_MODE_HEAT;
-      break;
+      return DAIKIN_MODE_HEAT;
     case climate::CLIMATE_MODE_HEAT_COOL:
-      operating_mode |= DAIKIN_MODE_AUTO;
-      break;
+      return DAIKIN_MODE_AUTO;
     case climate::CLIMATE_MODE_FAN_ONLY:
-      operating_mode |= DAIKIN_MODE_FAN;
-      break;
     case climate::CLIMATE_MODE_OFF:
+      // The saved mode should never be OFF.
     default:
-      operating_mode = DAIKIN_MODE_OFF;
-      break;
+      return DAIKIN_MODE_FAN;
   }
-
-  return operating_mode;
 }
 
-uint16_t DaikinBRC52bClimate::fan_speed_() {
-  uint16_t fan_speed;
+climate::ClimateMode DaikinBRC52bClimate::decode_mode(uint8_t modeAndFanData) const {
+  switch (modeAndFanData & 0xF) {
+    case DAIKIN_MODE_COOL:
+      return climate::CLIMATE_MODE_COOL;
+    case DAIKIN_MODE_DRY:
+      return climate::CLIMATE_MODE_DRY;
+    case DAIKIN_MODE_HEAT:
+      return climate::CLIMATE_MODE_HEAT;
+    case DAIKIN_MODE_AUTO:
+      return climate::CLIMATE_MODE_HEAT_COOL;
+    default:
+    case DAIKIN_MODE_FAN:
+      return climate::CLIMATE_MODE_FAN_ONLY;
+  }
+}
+
+uint8_t DaikinBRC52bClimate::encode_fan_speed() const {
   switch (this->fan_mode.value()) {
     case climate::CLIMATE_FAN_LOW:
-      fan_speed = DAIKIN_FAN_1 << 8;
-      break;
+      return DAIKIN_FAN_1;
     case climate::CLIMATE_FAN_MEDIUM:
-      fan_speed = DAIKIN_FAN_3 << 8;
-      break;
+      return DAIKIN_FAN_2;
     case climate::CLIMATE_FAN_HIGH:
-      fan_speed = DAIKIN_FAN_5 << 8;
-      break;
+      return DAIKIN_FAN_3;
+    case climate::CLIMATE_FAN_QUIET:
+      return DAIKIN_FAN_QUIET;
     case climate::CLIMATE_FAN_AUTO:
     default:
-      fan_speed = DAIKIN_FAN_AUTO << 8;
-  }
-
-  // If swing is enabled switch first 4 bits to 1111
-  switch (this->swing_mode) {
-    case climate::CLIMATE_SWING_VERTICAL:
-      fan_speed |= 0x0F00;
-      break;
-    case climate::CLIMATE_SWING_HORIZONTAL:
-      fan_speed |= 0x000F;
-      break;
-    case climate::CLIMATE_SWING_BOTH:
-      fan_speed |= 0x0F0F;
-      break;
-    default:
-      break;
-  }
-  return fan_speed;
-}
-
-uint8_t DaikinBRC52bClimate::temperature_() {
-  // Force special temperatures depending on the mode
-  switch (this->mode) {
-    case climate::CLIMATE_MODE_FAN_ONLY:
-      return 0x32;
-    case climate::CLIMATE_MODE_HEAT_COOL:
-    case climate::CLIMATE_MODE_DRY:
-      return 0xc0;
-    default:
-      uint8_t temperature = (uint8_t) roundf(clamp<float>(this->target_temperature, DAIKIN_TEMP_MIN, DAIKIN_TEMP_MAX));
-      return temperature << 1;
+      return DAIKIN_FAN_AUTO;
   }
 }
 
-bool DaikinBRC52bClimate::parse_state_frame_(const uint8_t frame[]) {
-  uint8_t checksum = 0;
-  for (int i = 0; i < (DAIKIN_STATE_FRAME_SIZE - 1); i++) {
-    checksum += frame[i];
-  }
-  if (frame[DAIKIN_STATE_FRAME_SIZE - 1] != checksum)
-    return false;
-  uint8_t mode = frame[5];
-  if (mode & DAIKIN_MODE_ON) {
-    switch (mode & 0xF0) {
-      case DAIKIN_MODE_COOL:
-        this->mode = climate::CLIMATE_MODE_COOL;
-        break;
-      case DAIKIN_MODE_DRY:
-        this->mode = climate::CLIMATE_MODE_DRY;
-        break;
-      case DAIKIN_MODE_HEAT:
-        this->mode = climate::CLIMATE_MODE_HEAT;
-        break;
-      case DAIKIN_MODE_AUTO:
-        this->mode = climate::CLIMATE_MODE_HEAT_COOL;
-        break;
-      case DAIKIN_MODE_FAN:
-        this->mode = climate::CLIMATE_MODE_FAN_ONLY;
-        break;
-    }
-  } else {
-    this->mode = climate::CLIMATE_MODE_OFF;
-  }
-  uint8_t temperature = frame[6];
-  if (!(temperature & 0xC0)) {
-    this->target_temperature = temperature >> 1;
-  }
-  uint8_t fan_mode = frame[8];
-  uint8_t swing_mode = frame[9];
-  if (fan_mode & 0xF && swing_mode & 0xF) {
-    this->swing_mode = climate::CLIMATE_SWING_BOTH;
-  } else if (fan_mode & 0xF) {
-    this->swing_mode = climate::CLIMATE_SWING_VERTICAL;
-  } else if (swing_mode & 0xF) {
-    this->swing_mode = climate::CLIMATE_SWING_HORIZONTAL;
-  } else {
-    this->swing_mode = climate::CLIMATE_SWING_OFF;
-  }
-  switch (fan_mode & 0xF0) {
+climate::ClimateFanMode DaikinBRC52bClimate::decode_fan_speed(uint8_t modeAndFanData) const {
+  switch (modeAndFanData & 0xF0) {
     case DAIKIN_FAN_1:
+      return climate::CLIMATE_FAN_LOW;
     case DAIKIN_FAN_2:
-    case DAIKIN_FAN_SILENT:
-      this->fan_mode = climate::CLIMATE_FAN_LOW;
-      break;
+      return climate::CLIMATE_FAN_MEDIUM;
     case DAIKIN_FAN_3:
-      this->fan_mode = climate::CLIMATE_FAN_MEDIUM;
-      break;
-    case DAIKIN_FAN_4:
-    case DAIKIN_FAN_5:
-      this->fan_mode = climate::CLIMATE_FAN_HIGH;
-      break;
+    case DAIKIN_FAN_STRONG:
+      return climate::CLIMATE_FAN_HIGH;
+    case DAIKIN_FAN_QUIET:
+      return climate::CLIMATE_FAN_QUIET;
     case DAIKIN_FAN_AUTO:
-      this->fan_mode = climate::CLIMATE_FAN_AUTO;
-      break;
+    default:
+      return climate::CLIMATE_FAN_AUTO;
   }
+}
+
+uint8_t DaikinBRC52bClimate::encode_fan_swing() const {
+  return (this->swing_mode == climate::CLIMATE_SWING_OFF) ? 0x0 : DAIKIN_FAN_SWING_VERTICAL;
+}
+
+climate::ClimateSwingMode DaikinBRC52bClimate::decode_fan_swing(uint8_t fandAndPowerToggleByte) const {
+  return (fandAndPowerToggleByte & DAIKIN_FAN_SWING_VERTICAL) ? climate::CLIMATE_SWING_VERTICAL
+                                                              : climate::CLIMATE_SWING_OFF;
+}
+
+uint8_t DaikinBRC52bClimate::encode_temperature() const {
+  auto target_temperature = roundf(clamp<float>(this->target_temperature, DAIKIN_TEMP_MIN, DAIKIN_TEMP_MAX));
+  return encode_bcd(static_cast<uint8_t>(target_temperature));
+}
+
+uint8_t DaikinBRC52bClimate::encode_power_toggle() {
+  if (this->mode == climate::CLIMATE_MODE_OFF ? this->power_on_ : !this->power_on_) {
+    this->power_on_ = !this->power_on_;
+    return DAIKIN_TOGGLE_POWER;
+  } else {
+    return 0x0;
+  }
+}
+
+bool DaikinBRC52bClimate::parse_state_frame(const uint8_t frame[]) {
+  if (frame[7] & DAIKIN_TOGGLE_POWER) {
+    this->power_on_ = !this->power_on_;
+  }
+
+  this->saved_mode_ = this->decode_mode(frame[1] & 0xF);
+  this->mode = this->power_on_ ? this->saved_mode_ : climate::CLIMATE_MODE_OFF;
+
+  this->target_temperature = decode_bcd(frame[6]);
+  this->fan_mode = this->decode_fan_speed(frame[1]);
+  this->swing_mode = this->decode_fan_swing(frame[7]);
+
   this->publish_state();
+  ESP_LOGD(TAG, "Hours: %d, minutes: %d", frame[3], frame[2]);
   return true;
 }
 
+namespace {
+optional<uint8_t> expect_byte(remote_base::RemoteReceiveData &data) {
+  uint8_t result = 0;
+
+  // Note: bytes are received from least to most significant.
+  for (int i = 0; i < 8; i++) {
+    if (data.expect_item(DAIKIN_BIT_MARK, DAIKIN_ONE_SPACE)) {
+      result = (result >> 1) | 0x80;
+    } else if (data.expect_item(DAIKIN_BIT_MARK, DAIKIN_ZERO_SPACE)) {
+      result >>= 1;
+    } else {
+      return {};
+    }
+  }
+
+  return result;
+}
+}  // namespace
+
 bool DaikinBRC52bClimate::on_receive(remote_base::RemoteReceiveData data) {
-  uint8_t state_frame[DAIKIN_STATE_FRAME_SIZE] = {};
-  if (!data.expect_item(DAIKIN_HEADER_MARK, DAIKIN_HEADER_SPACE)) {
+  bool gotHeader = data.expect_item(DAIKIN_HEADER1_MARK, DAIKIN_HEADER1_SPACE) &&
+                   data.expect_item(DAIKIN_HEADER1_MARK, DAIKIN_HEADER1_SPACE) &&
+                   data.expect_item(DAIKIN_HEADER2_MARK, DAIKIN_HEADER2_SPACE);
+  if (!gotHeader) {
     return false;
   }
-  for (uint8_t pos = 0; pos < DAIKIN_STATE_FRAME_SIZE; pos++) {
-    uint8_t byte = 0;
-    for (int8_t bit = 0; bit < 8; bit++) {
-      if (data.expect_item(DAIKIN_BIT_MARK, DAIKIN_ONE_SPACE)) {
-        byte |= 1 << bit;
-      } else if (!data.expect_item(DAIKIN_BIT_MARK, DAIKIN_ZERO_SPACE)) {
-        return false;
-      }
+
+  int checksum = 0;
+  uint8_t state_frame[DAIKIN_STATE_FRAME_SIZE] = {};
+  for (int i = 0; i < DAIKIN_STATE_FRAME_SIZE; i++) {
+    auto byte = expect_byte(data);
+    if (!byte || (i == 0 && *byte != 0x16)) {
+      return false;
     }
-    state_frame[pos] = byte;
-    if (pos == 0) {
-      // frame header
-      if (byte != 0x11)
-        return false;
-    } else if (pos == 1) {
-      // frame header
-      if (byte != 0xDA)
-        return false;
-    } else if (pos == 2) {
-      // frame header
-      if (byte != 0x27)
-        return false;
-    } else if (pos == 3) {  // NOLINT(bugprone-branch-clone)
-      // frame header
-      if (byte != 0x00)
-        return false;
-    } else if (pos == 4) {
-      // frame type
-      if (byte != 0x00)
-        return false;
+
+    if (i != 7) {
+      checksum += (*byte >> 4) + (*byte & 0xF);
+    } else {
+      // Do not include the received checksum in the checksum calculation.
+      checksum += *byte & 0xF;
     }
+
+    state_frame[i] = *byte;
   }
-  return this->parse_state_frame_(state_frame);
+
+  if ((checksum & 0xF) != (state_frame[7] >> 4)) {
+    ESP_LOGW(TAG, "Received IR data with invalid checksum");
+    return false;
+  }
+
+  ESP_LOGV(TAG, "Received state frame:   %s", daikin_frame_to_string(state_frame).c_str());
+
+#if ESPHOME_LOG_LEVEL >= ESPHOME_LOG_LEVEL_VERY_VERBOSE
+  // There is almost no useful information in the control frame, but we capture and log it at the highest verbosity
+  // setting.
+  uint8_t control_frame[DAIKIN_STATE_FRAME_SIZE] = {};
+  data.expect_item(DAIKIN_BIT_MARK, DAIKIN_FRAME_GAP);
+  for (int i = 0; i < DAIKIN_STATE_FRAME_SIZE; i++) {
+    auto byte = expect_byte(data);
+    control_frame[i] = byte ? *byte : 0;
+  }
+  ESP_LOGVV(TAG, "Received control frame: %s", daikin_frame_to_string(control_frame).c_str());
+#endif
+
+  return this->parse_state_frame(state_frame);
 }
 
 }  // namespace daikin_brc52b
