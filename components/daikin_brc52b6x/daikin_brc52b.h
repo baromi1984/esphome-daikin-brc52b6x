@@ -1,6 +1,7 @@
 #pragma once
 
 #include "esphome/components/climate_ir/climate_ir.h"
+#include "esphome/components/time/real_time_clock.h"
 
 namespace esphome {
 namespace daikin_brc52b {
@@ -56,6 +57,8 @@ class DaikinBRC52bClimate : public climate_ir::ClimateIR {
                                climate::CLIMATE_FAN_HIGH, climate::CLIMATE_FAN_QUIET},
                               {climate::CLIMATE_SWING_OFF, climate::CLIMATE_SWING_VERTICAL}) {}
 
+  void set_time_source(time::RealTimeClock *time_source) { this->time_source_ = time_source; }
+
   void toggle_ceiling_led() { this->transmit_state_with_led_commands(true, false); };
   void toggle_wall_led() { this->transmit_state_with_led_commands(false, true); }
 
@@ -80,6 +83,8 @@ class DaikinBRC52bClimate : public climate_ir::ClimateIR {
   // Handle received IR Buffer
   bool on_receive(remote_base::RemoteReceiveData data) override;
   bool parse_state_frame(const uint8_t frame[]);
+
+  time::RealTimeClock *time_source_{nullptr};
 
   bool power_on_{false};
 

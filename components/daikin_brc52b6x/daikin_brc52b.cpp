@@ -41,11 +41,19 @@ void DaikinBRC52bClimate::transmit_state_with_led_commands(bool ceiling_led_comm
     this->saved_mode_ = this->mode;
   }
 
+  uint8_t minute = 0;
+  uint8_t hour = 0;
+  if (this->time_source_) {
+    auto now = this->time_source_->now();
+    minute = encode_bcd(now.minute);
+    hour = encode_bcd(now.hour);
+  }
+
   uint8_t state_frame[DAIKIN_STATE_FRAME_SIZE];
   state_frame[0] = DAIKIN_FRAME_1_HEADER;
   state_frame[1] = this->encode_mode() | this->encode_fan_speed();
-  state_frame[2] = 0x00;  // TODO
-  state_frame[3] = 0x00;  // TODO
+  state_frame[2] = minute;
+  state_frame[3] = hour;
   state_frame[4] = 0x13;  // TODO
   state_frame[5] = 0x04;  // TODO
   state_frame[6] = this->encode_temperature();
@@ -212,7 +220,6 @@ bool DaikinBRC52bClimate::parse_state_frame(const uint8_t frame[]) {
   this->swing_mode = this->decode_fan_swing(frame[7]);
 
   this->publish_state();
-  ESP_LOGD(TAG, "Hours: %d, minutes: %d", frame[3], frame[2]);
   return true;
 }
 

@@ -2,8 +2,8 @@ import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome import automation
 from esphome.automation import maybe_simple_id
-from esphome.components import climate_ir
-from esphome.const import CONF_ID
+from esphome.components import climate_ir, time
+from esphome.const import CONF_ID, CONF_TIME_ID
 
 AUTO_LOAD = ["climate_ir"]
 
@@ -13,12 +13,16 @@ DaikinBRC52bClimate = daikin_ns.class_("DaikinBRC52bClimate", climate_ir.Climate
 CONFIG_SCHEMA = climate_ir.CLIMATE_IR_WITH_RECEIVER_SCHEMA.extend(
     {
         cv.GenerateID(): cv.declare_id(DaikinBRC52bClimate),
+        cv.Optional(CONF_TIME_ID): cv.use_id(time.RealTimeClock),
     }
 )
 
 async def to_code(config):
     var = cg.new_Pvariable(config[CONF_ID])
     await climate_ir.register_climate_ir(var, config)
+    if CONF_TIME_ID in config:
+        time = await cg.get_variable(config[CONF_TIME_ID])
+        cg.add(var.set_time_source(time))
 
 # Toggle the ceiling cassette unit's status light.
 ToggleCeilingLEDAction = daikin_ns.class_("ToggleCeilingLEDAction", automation.Action)
