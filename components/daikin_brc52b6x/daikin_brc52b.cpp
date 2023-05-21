@@ -54,6 +54,17 @@ uint8_t encode_bcd(uint8_t value) { return ((value / 10) << 4) | ((value % 10) &
 uint8_t decode_bcd(uint8_t value_bcd) { return 10 * (value_bcd >> 4) + (value_bcd & 0xF); }
 }  // namespace
 
+void DaikinBRC52bClimate::update_on_off_state(bool state) {
+  this->power_on_ = state;
+  if (this->power_on_ && this->mode == climate::CLIMATE_MODE_OFF) {
+    this->mode = this->saved_mode_;
+    this->publish_state();
+  } else if (!this->power_on_ && this->mode != climate::CLIMATE_MODE_OFF) {
+    this->mode = climate::CLIMATE_MODE_OFF;
+    this->publish_state();
+  }
+}
+
 void DaikinBRC52bClimate::transmit_state_with_led_commands(bool ceiling_led_command, bool wall_led_command) {
   if (this->mode != climate::CLIMATE_MODE_OFF) {
     this->saved_mode_ = this->mode;

@@ -79,6 +79,7 @@ class DaikinBRC52bClimate : public climate_ir::ClimateIR {
 
   void toggle_ceiling_led() { this->transmit_state_with_led_commands(true, false); };
   void toggle_wall_led() { this->transmit_state_with_led_commands(false, true); }
+  void update_on_off_state(bool state);
 
  protected:
   // Transmit via IR the state of this climate controller.

@@ -23,7 +23,7 @@ import esphome.config_validation as cv
 from esphome import automation
 from esphome.automation import maybe_simple_id
 from esphome.components import climate_ir, time
-from esphome.const import CONF_ID, CONF_TIME_ID
+from esphome.const import CONF_ASSUMED_STATE, CONF_ID, CONF_TIME_ID
 
 AUTO_LOAD = ["climate_ir"]
 
@@ -74,4 +74,25 @@ ToggleWallLEDAction = daikin_ns.class_("ToggleWallLEDAction", automation.Action)
 async def daikin_brc52b6x_toggle_wall_led_to_code(config, action_id, template_arg, args):
     paren = await cg.get_variable(config[CONF_ID])
     var = cg.new_Pvariable(action_id, template_arg, paren)
+    return var
+
+# Update the component's internal state to indicate whether it is on or off.
+UpdateOnOffStateAction = daikin_ns.class_("UpdateOnOffStateAction", automation.Action)
+@automation.register_action(
+    "daikin_brc52b6x.update_on_off_state",
+    UpdateOnOffStateAction,
+    maybe_simple_id(
+        {
+            cv.Required(CONF_ID): cv.use_id(DaikinBRC52bClimate),
+            cv.Required(CONF_ASSUMED_STATE): cv.templatable(cv.boolean),
+        }
+    )
+)
+async def daikin_brc52b6x_update_on_off_state(config, action_id, template_arg, args):
+    paren = await cg.get_variable(config[CONF_ID])
+    var = cg.new_Pvariable(action_id, template_arg, paren)
+
+    state_template_ = await cg.templatable(config[CONF_ASSUMED_STATE], args, bool)
+    cg.add(var.set_state(state_template_))
+
     return var

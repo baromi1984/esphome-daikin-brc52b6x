@@ -46,5 +46,17 @@ template<typename... Ts> class ToggleWallLEDAction : public Action<Ts...> {
   DaikinBRC52bClimate *daikin_;
 };
 
+template<typename... Ts> class UpdateOnOffStateAction : public Action<Ts...> {
+ public:
+  explicit UpdateOnOffStateAction(DaikinBRC52bClimate *daikin) : daikin_(daikin) {}
+
+  void set_state(bool state) { state_ = state; };
+  void play(Ts... x) override { daikin_->update_on_off_state(state_); }
+
+ protected:
+  DaikinBRC52bClimate *daikin_;
+  bool state_;
+};
+
 }  // namespace daikin_brc52b
 }  // namespace esphome
