@@ -23,7 +23,7 @@ import esphome.config_validation as cv
 from esphome import automation
 from esphome.automation import maybe_simple_id
 from esphome.components import climate_ir, time
-from esphome.const import CONF_ASSUMED_STATE, CONF_ID, CONF_TIME_ID
+from esphome.const import CONF_ASSUMED_STATE, CONF_ID, CONF_TIME_ID, CONF_VALUE
 
 AUTO_LOAD = ["climate_ir"]
 
@@ -81,7 +81,7 @@ UpdateOnOffStateAction = daikin_ns.class_("UpdateOnOffStateAction", automation.A
 @automation.register_action(
     "daikin_brc52b6x.update_on_off_state",
     UpdateOnOffStateAction,
-    maybe_simple_id(
+    cv.Schema(
         {
             cv.Required(CONF_ID): cv.use_id(DaikinBRC52bClimate),
             cv.Required(CONF_ASSUMED_STATE): cv.templatable(cv.boolean),
@@ -94,5 +94,64 @@ async def daikin_brc52b6x_update_on_off_state(config, action_id, template_arg, a
 
     state_template_ = await cg.templatable(config[CONF_ASSUMED_STATE], args, bool)
     cg.add(var.set_state(state_template_))
+
+    return var
+
+CONF_ENABLED = "enabled"
+
+# If you have configured a clock, you can set a time for your unit to automatically power on. The
+# time is in units of half hour intervals from midnight. E.g., when 'value' is 3, the timer is set
+# 1:30am. Note that any commands sent from a different remote control will overwrite your timer
+# setting. (If you have configured an IR receiver, commands sent from this integration will
+# preserve any timers set by another remote, assuming that the receiver successfully receives the
+# other remote's state.)
+PowerOnTimer = daikin_ns.class_("PowerOnTimer", automation.Action)
+@automation.register_action(
+    "daikin_brc52b6x.power_on_timer",
+    PowerOnTimer,
+    cv.Schema(
+        {
+            cv.Required(CONF_ID): cv.use_id(DaikinBRC52bClimate),
+            cv.Required(CONF_ENABLED): cv.templatable(cv.boolean),
+            cv.Optional(CONF_VALUE): cv.templatable(cv.uint32_t),
+        }
+    )
+)
+async def daikin_brc52b6x_power_on_timer(config, action_id, template_arg, args):
+    paren = await cg.get_variable(config[CONF_ID])
+    var = cg.new_Pvariable(action_id, template_arg, paren)
+
+    enabled_template_ = await cg.templatable(config[CONF_ENABLED], args, bool)
+    cg.add(var.set_enabled(enabled_template_))
+
+    if CONF_VALUE in config:
+        value_template_ = await cg.templatable(config[CONF_VALUE], args, int)
+        cg.add(var.set_value(value_template_))
+
+    return var
+
+# See the notes above for the 'PowerOffTimer' action.
+PowerOffTimer = daikin_ns.class_("PowerOffTimer", automation.Action)
+@automation.register_action(
+    "daikin_brc52b6x.power_off_timer",
+    PowerOffTimer,
+    cv.Schema(
+        {
+            cv.Required(CONF_ID): cv.use_id(DaikinBRC52bClimate),
+            cv.Required(CONF_ENABLED): cv.templatable(cv.boolean),
+            cv.Optional(CONF_VALUE): cv.templatable(cv.uint32_t),
+        }
+    )
+)
+async def daikin_brc52b6x_power_off_timer(config, action_id, template_arg, args):
+    paren = await cg.get_variable(config[CONF_ID])
+    var = cg.new_Pvariable(action_id, template_arg, paren)
+
+    enabled_template_ = await cg.templatable(config[CONF_ENABLED], args, bool)
+    cg.add(var.set_enabled(enabled_template_))
+
+    if CONF_VALUE in config:
+        value_template_ = await cg.templatable(config[CONF_VALUE], args, int)
+        cg.add(var.set_value(value_template_))
 
     return var

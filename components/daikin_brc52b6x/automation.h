@@ -20,7 +20,6 @@
 
 #include "esphome/core/automation.h"
 #include "esphome/core/component.h"
-#include "esphome/core/optional.h"
 #include "daikin_brc52b.h"
 
 namespace esphome {
@@ -56,6 +55,46 @@ template<typename... Ts> class UpdateOnOffStateAction : public Action<Ts...> {
  protected:
   DaikinBRC52bClimate *daikin_;
   bool state_;
+};
+
+template<typename... Ts> class PowerOnTimer : public Action<Ts...> {
+ public:
+  explicit PowerOnTimer(DaikinBRC52bClimate *daikin) : daikin_(daikin) {}
+
+  void set_enabled(bool enabled) { enabled_ = enabled; };
+  void set_value(uint32_t value) { value_ = value; };
+  void play(Ts... x) override {
+    if (enabled_) {
+      daikin_->enable_power_on_timer(value_);
+    } else {
+      daikin_->disable_power_on_timer();
+    }
+  }
+
+ protected:
+  DaikinBRC52bClimate *daikin_;
+  bool enabled_{false};
+  uint32_t value_{0};
+};
+
+template<typename... Ts> class PowerOffTimer : public Action<Ts...> {
+ public:
+  explicit PowerOffTimer(DaikinBRC52bClimate *daikin) : daikin_(daikin) {}
+
+  void set_enabled(bool enabled) { enabled_ = enabled; };
+  void set_value(uint32_t value) { value_ = value; };
+  void play(Ts... x) override {
+    if (enabled_) {
+      daikin_->enable_power_off_timer(value_);
+    } else {
+      daikin_->disable_power_off_timer();
+    }
+  }
+
+ protected:
+  DaikinBRC52bClimate *daikin_;
+  bool enabled_{false};
+  uint32_t value_{0};
 };
 
 }  // namespace daikin_brc52b

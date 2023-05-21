@@ -52,6 +52,29 @@ uint8_t encode_bcd(uint8_t value) { return ((value / 10) << 4) | ((value % 10) &
 
 // Inverse of encode_bcd().
 uint8_t decode_bcd(uint8_t value_bcd) { return 10 * (value_bcd >> 4) + (value_bcd & 0xF); }
+
+optional<uint8_t> decode_timer_state(uint8_t timer_byte) {
+  if (!(timer_byte & 0x80)) {
+    return {};
+  }
+
+  uint8_t hour = decode_bcd(timer_byte & 0x3F);
+  uint8_t half_hour = (timer_byte & 0x40) ? 1 : 0;
+
+  return 2 * hour + half_hour;
+}
+
+uint8_t encode_timer_state(optional<uint8_t> timer_state) {
+  if (!timer_state) {
+    return 0;
+  }
+
+  uint8_t enabled = 0x80;
+  uint8_t hour = encode_bcd(*timer_state / 2);
+  uint8_t half_hour = (*timer_state % 2 == 1) ? 0x40 : 0x00;
+
+  return enabled | hour | half_hour;
+}
 }  // namespace
 
 void DaikinBRC52bClimate::update_on_off_state(bool state) {
@@ -63,6 +86,26 @@ void DaikinBRC52bClimate::update_on_off_state(bool state) {
     this->mode = climate::CLIMATE_MODE_OFF;
     this->publish_state();
   }
+}
+
+void DaikinBRC52bClimate::enable_power_on_timer(uint32_t power_on_time) {
+  this->power_on_timer_state_ = power_on_time;
+  this->transmit_state_with_led_commands(false, false);
+}
+
+void DaikinBRC52bClimate::disable_power_on_timer() {
+  this->power_on_timer_state_.reset();
+  this->transmit_state_with_led_commands(false, false);
+}
+
+void DaikinBRC52bClimate::enable_power_off_timer(uint32_t power_off_time) {
+  this->power_off_timer_state_ = power_off_time;
+  this->transmit_state_with_led_commands(false, false);
+}
+
+void DaikinBRC52bClimate::disable_power_off_timer() {
+  this->power_off_timer_state_.reset();
+  this->transmit_state_with_led_commands(false, false);
 }
 
 void DaikinBRC52bClimate::transmit_state_with_led_commands(bool ceiling_led_command, bool wall_led_command) {
@@ -83,8 +126,8 @@ void DaikinBRC52bClimate::transmit_state_with_led_commands(bool ceiling_led_comm
   state_frame[1] = this->encode_mode() | this->encode_fan_speed();
   state_frame[2] = minute;
   state_frame[3] = hour;
-  state_frame[4] = 0x13;  // TODO
-  state_frame[5] = 0x04;  // TODO
+  state_frame[4] = encode_timer_state(this->power_on_timer_state_);
+  state_frame[5] = encode_timer_state(this->power_off_timer_state_);
   state_frame[6] = this->encode_temperature();
   state_frame[7] = this->encode_power_toggle() | 0x4 | this->encode_fan_swing();
 
@@ -247,6 +290,9 @@ bool DaikinBRC52bClimate::parse_state_frame(const uint8_t frame[]) {
   this->target_temperature = decode_bcd(frame[6]);
   this->fan_mode = this->decode_fan_speed(frame[1]);
   this->swing_mode = this->decode_fan_swing(frame[7]);
+
+  this->power_on_timer_state_ = decode_timer_state(frame[4]);
+  this->power_off_timer_state_ = decode_timer_state(frame[5]);
 
   this->publish_state();
   return true;
