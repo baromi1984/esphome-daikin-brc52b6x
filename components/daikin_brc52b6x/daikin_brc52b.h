@@ -10,6 +10,9 @@ const uint8_t DAIKIN_FRAME_2_HEADER = 0xA1;
 
 const uint8_t DAIKIN_TOGGLE_POWER = 0x8;
 
+const uint8_t DAIKIN_TOGGLE_CEILING_LED = 0x1;
+const uint8_t DAIKIN_TOGGLE_WALL_LED = 0x8;
+
 // Temperature
 const uint8_t DAIKIN_TEMP_MIN = 16;  // Celsius
 const uint8_t DAIKIN_TEMP_MAX = 30;  // Celsius
@@ -53,9 +56,13 @@ class DaikinBRC52bClimate : public climate_ir::ClimateIR {
                                climate::CLIMATE_FAN_HIGH, climate::CLIMATE_FAN_QUIET},
                               {climate::CLIMATE_SWING_OFF, climate::CLIMATE_SWING_VERTICAL}) {}
 
+  void toggle_ceiling_led() { this->transmit_state_with_led_commands(true, false); };
+  void toggle_wall_led() { this->transmit_state_with_led_commands(false, true); }
+
  protected:
   // Transmit via IR the state of this climate controller.
-  void transmit_state() override;
+  void transmit_state() override { transmit_state_with_led_commands(false, false); };
+  void transmit_state_with_led_commands(bool ceiling_led_command, bool wall_led_command);
 
   uint8_t encode_mode() const;
   climate::ClimateMode decode_mode(uint8_t modeAndFanData) const;

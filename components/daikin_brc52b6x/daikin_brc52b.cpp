@@ -36,7 +36,7 @@ uint8_t encode_bcd(uint8_t value) { return ((value / 10) << 4) | ((value % 10) &
 uint8_t decode_bcd(uint8_t value_bcd) { return 10 * (value_bcd >> 4) + (value_bcd & 0xF); }
 }  // namespace
 
-void DaikinBRC52bClimate::transmit_state() {
+void DaikinBRC52bClimate::transmit_state_with_led_commands(bool ceiling_led_command, bool wall_led_command) {
   if (this->mode != climate::CLIMATE_MODE_OFF) {
     this->saved_mode_ = this->mode;
   }
@@ -59,6 +59,13 @@ void DaikinBRC52bClimate::transmit_state() {
   state_frame[7] |= (state_checksum & 0xF) << 4;
 
   uint8_t control_frame[DAIKIN_STATE_FRAME_SIZE] = {0xA1, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+
+  if (ceiling_led_command) {
+    control_frame[1] |= DAIKIN_TOGGLE_CEILING_LED;
+  }
+  if (wall_led_command) {
+    control_frame[1] |= DAIKIN_TOGGLE_WALL_LED;
+  }
 
   uint8_t control_checksum = 0;
   for (int i = 0; i < DAIKIN_STATE_FRAME_SIZE; i++) {
