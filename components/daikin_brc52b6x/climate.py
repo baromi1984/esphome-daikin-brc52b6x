@@ -30,7 +30,7 @@ AUTO_LOAD = ["climate_ir"]
 daikin_ns = cg.esphome_ns.namespace("daikin_brc52b")
 DaikinBRC52bClimate = daikin_ns.class_("DaikinBRC52bClimate", climate_ir.ClimateIR)
 
-CONFIG_SCHEMA = climate_ir.CLIMATE_IR_WITH_RECEIVER_SCHEMA.extend(
+CONFIG_SCHEMA = climate_ir.climate_ir_with_receiver_schema(DaikinBRC52bClimate).extend(
     {
         cv.GenerateID(): cv.declare_id(DaikinBRC52bClimate),
         cv.Optional(CONF_TIME_ID): cv.use_id(time.RealTimeClock),
