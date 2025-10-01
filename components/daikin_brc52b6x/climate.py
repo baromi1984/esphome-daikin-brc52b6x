@@ -39,7 +39,7 @@ CONFIG_SCHEMA = climate_ir.climate_ir_with_receiver_schema(DaikinBRC52bClimate).
 
 async def to_code(config):
     var = cg.new_Pvariable(config[CONF_ID])
-    await climate_ir.register_climate_ir(var, config)
+    await climate_ir.new_climate_ir(var, config)
     if CONF_TIME_ID in config:
         time = await cg.get_variable(config[CONF_TIME_ID])
         cg.add(var.set_time_source(time))
